@@ -643,6 +643,37 @@ ruby_block "keystone-assign-admin-roles" do
   end
 end
 
+ruby_block "keystone-assign-admin-role-to-default-domain" do
+  block do
+    name = "keystone-assign-admin-role-to-default-domain::#{admin_config[:ldap][:project_domain]}::#{admin_config[:ldap][:user_name]}"
+    a_cmd = "openstack role add"
+    a_opts = [
+      "--user #{admin_config[:ldap][:user_name]}",
+      "--domain #{admin_config[:ldap][:project_domain]}",
+      "--user-domain #{admin_config[:ldap][:user_domain]}",
+    ]
+    a_args = [admin_role_name]
+
+    g_cmd = "openstack role assignment list"
+    g_opts = a_opts + [
+      "-fjson",
+      "--role #{admin_role_name}",
+    ]
+    assign_cmd = ([a_cmd] + a_opts + a_args).join(' ')
+    guard_cmd = ([g_cmd] + g_opts).join(' ')
+    run_context.resource_collection << admin_assign = Chef::Resource::RubyBlock.new(name, run_context)
+    admin_assign.block { execute_in_keystone_admin_context(assign_cmd) }
+    admin_assign.only_if {
+      begin
+        r = JSON.parse execute_in_keystone_admin_context(guard_cmd)
+        r.empty?
+      rescue JSON::ParserError
+        true
+      end
+    }
+  end
+end
+
 ruby_block "keystone-create-service-project" do
   block do
     execute_in_keystone_admin_context("openstack project create --domain #{service_project_domain} --description 'Service Project' #{service_project_name}")
@@ -695,7 +726,7 @@ template "/root/admin-openrc" do
         {
           username: admin_username,
           password: get_config('keystone-local-admin-password'),
-          project_name: admin_project_name,
+          domain: admin_user_domain,
           user_domain: admin_user_domain,
           project_domain: admin_project_domain
         }
