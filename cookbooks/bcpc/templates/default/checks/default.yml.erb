@@ -7,5 +7,3 @@
 <%- auth_vars.each do |name, val| %>
 <%= name %>: <%= val %>
 <% end %>
-storage_vip:  <%="#{node[:bcpc][:floating][:vip]}"%>
-storage_port: <%="#{node[:bcpc][:ports][:radosgw]}" %>
