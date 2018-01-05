@@ -41,13 +41,13 @@ begin
   make_config('keystone-admin-project-name',
               node['bcpc']['ldap']['admin_project_name'] || node["bcpc"]["keystone"]["admin"]["project_name"])
   make_config('keystone-admin-project-domain',
-              node['bcpc']['ldap']['admin_project_domain'] || node["bcpc"]["keystone"]["admin"]["project_domain"])
+              node['bcpc']['ldap']['admin_project_domain'] || node["bcpc"]["keystone"]["admin"]["domain"])
   make_config('keystone-admin-user-domain',
-              node['bcpc']['ldap']['admin_user_domain'] || node["bcpc"]["keystone"]["admin"]["user_domain"])
+              node['bcpc']['ldap']['admin_user_domain'] || node["bcpc"]["keystone"]["admin"]["domain"])
   begin
       get_config('keystone-pki-certificate')
   rescue
-      temp = %x[openssl req -new -x509 -passout pass:temp_passwd -newkey rsa:2048 -out /dev/stdout -keyout /dev/stdout -days 1095 -subj "/C=#{node['bcpc']['country']}/ST=#{node['bcpc']['state']}/L=#{node['bcpc']['location']}/O=#{node['bcpc']['organization']}/OU=#{node['bcpc']['region_name']}/CN=keystone.#{node['bcpc']['cluster_domain']}/emailAddress=#{node['bcpc']['keystone']['admin_email']}"]
+      temp = %x[openssl req -new -x509 -passout pass:temp_passwd -newkey rsa:2048 -out /dev/stdout -keyout /dev/stdout -days 1095 -subj "/C=#{node['bcpc']['country']}/ST=#{node['bcpc']['state']}/L=#{node['bcpc']['location']}/O=#{node['bcpc']['organization']}/OU=#{node['bcpc']['region_name']}/CN=keystone.#{node['bcpc']['cluster_domain']}/emailAddress=#{node['bcpc']['keystone']['admin']['email']}"]
       make_config('keystone-pki-private-key', %x[echo "#{temp}" | openssl rsa -passin pass:temp_passwd -out /dev/stdout])
       make_config('keystone-pki-certificate', %x[echo "#{temp}" | openssl x509])
   end
@@ -522,12 +522,12 @@ default_domain = node['bcpc']['keystone']['default_domain']
 member_role_name = node['bcpc']['keystone']['member_role']
 service_project_name = node['bcpc']['keystone']['service_project']['name']
 service_project_domain = node['bcpc']['keystone']['service_project']['domain']
+admin_username = node['bcpc']['keystone']['admin']['username']
 admin_project_name = node['bcpc']['keystone']['admin']['project_name']
 admin_role_name = node['bcpc']['keystone']['admin_role']
-admin_username = node['bcpc']['keystone']['admin']['username']
 # NB(kamidzi): Make sure admin project is in same domain as service project!
-admin_project_domain = node['bcpc']['keystone']['admin']['project_domain']
-admin_user_domain = node['bcpc']['keystone']['admin']['user_domain']
+admin_project_domain = node['bcpc']['keystone']['admin']['domain']
+admin_user_domain = node['bcpc']['keystone']['admin']['domain']
 
 # For case... mostly migratory where ldap-backed domain already exists, sql-backed is added
 admin_config = {
