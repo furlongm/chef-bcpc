@@ -24,7 +24,7 @@ end
 
 execute 'set-os-quota' do
     action :nothing
-    command '. /root/adminrc; /usr/local/bin/if_vip /usr/local/bin/set-os-quota.py'
+    command '. /root/nova-openrc; /usr/local/bin/if_vip /usr/local/bin/set-os-quota.py'
 end
 
 template '/usr/local/etc/os-quota.yml' do
