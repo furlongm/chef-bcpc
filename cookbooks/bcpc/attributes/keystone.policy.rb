@@ -3,6 +3,9 @@
 #  Keystone policy Settings
 #
 ###########################################
+
+include_attribute "bcpc::keystone"
+
 default['bcpc']['keystone']['policy'] = {
     "admin_required" => "role:admin",
     "cloud_admin" => "role:admin and (token.is_admin_project:True or domain_name:#{default['bcpc']['keystone']['admin']['domain']})",

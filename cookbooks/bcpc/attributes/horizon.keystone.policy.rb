@@ -3,9 +3,12 @@
 #  Keystone policy Settings
 #
 ###########################################
+
+include_attribute "bcpc::keystone"
+
 default['bcpc']['horizon']['keystone_policy'] = {
     "admin_required" => "role:admin",
-    "cloud_admin" => "role:admin and (is_admin_project:True or domain_name:local)",
+    "cloud_admin" => "role:admin and (is_admin_project:True or domain_name:#{default['bcpc']['keystone']['admin']['domain']})",
     "service_role" => "role:service",
     "service_or_admin" => "rule:admin_required or rule:service_role",
     "owner" =>  "user_id:%(user_id)s or user_id:%(target.token.user_id)s",
