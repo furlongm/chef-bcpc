@@ -40,7 +40,10 @@ class dns_popper(object):
             auth_params['tenant_name'] = config['OS_PROJECT_NAME']
         else:
             from keystoneclient.v3 import client as kclient
-            auth_params['project_name'] = config['OS_PROJECT_NAME']
+            if 'OS_PROJECT_NAME' in config:
+                auth_params['project_name'] = config['OS_PROJECT_NAME']
+            elif 'OS_DOMAIN_NAME' in config:
+                auth_params['domain_name'] = config['OS_DOMAIN_NAME']
             auth_params['project_domain_name'] = config['OS_PROJECT_DOMAIN_NAME']
             auth_params['user_domain_name'] = config['OS_USER_DOMAIN_NAME']
         self.keystone = kclient.Client(**auth_params)
