@@ -335,8 +335,8 @@ caching = false
 <% end %>
 
 <% if node['bcpc']['keystone']['admin']['enable_admin_project'] %>
-admin_project_name = <%= node['bcpc']['keystone']['admin']['project_name'] %>
-admin_project_domain_name = <%= node['bcpc']['keystone']['admin']['domain'] %>
+admin_project_name = <%= get_config("keystone-admin-project-name") %>
+admin_project_domain_name = <%= get_config("keystone-admin-project-domain") %>
 <% end %>
 domain_name_url_safe = strict
 project_name_url_safe = strict
