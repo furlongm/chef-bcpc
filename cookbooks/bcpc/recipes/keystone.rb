@@ -668,24 +668,3 @@ end
 link '/root/adminrc' do
   to adminrc
 end
-
-# Migration for user ids
-# This is necessary when existing admin user is a member of an ldap-backed domain
-# in single-domain deployment which then migrates to multi-domain deployment. Even
-# if domain name remains the same, the user is re-issued an id. This new id needs to
-# be permissioned
-cookbook_file "/usr/lib/python2.7/dist-packages/keystone/common/sql/migrate_repo/versions/098_migrate_single_to_multi_domain_user_ids.py" do
-  source "keystone/098_migrate_single_to_multi_domain_user_ids.py"
-  owner "root"
-  group "root"
-  mode  "0644"
-end
-
-# User records need to be accessed to populate database with new, stable public IDs
-ruby_block "keystone-list-admin-domain-users" do
-  block do
-    execute_in_keystone_admin_context("openstack user list --domain #{get_config('keystone-admin-user-domain')}")
-  end
-  notifies :run, "bash[keystone-database-sync]", :immediately
-  not_if { %x[bash -c ". #{adminrc} && openstack token issue"] ; $?.success? and keystone_db_version == '98' }
-end
