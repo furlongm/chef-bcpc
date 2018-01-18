@@ -11,7 +11,7 @@
 
   # leave / on the end of src path so rsync doesn't put the mirror dir inside the dest dir!
   - name: Perform synchronization of local apt mirror (can take a long while)
-    synchronize: src={{ controlnode_apt_mirror_dir }}/ dest={{ bootstrap_apt_mirror_dir }} owner=no group=no
+    synchronize: src={{ controlnode_apt_mirror_dir }}/ dest={{ bootstrap_apt_mirror_dir }} owner=no group=no delete=yes
     become: no
     when: not apt_mirror_via_vboxsf
     tags:
