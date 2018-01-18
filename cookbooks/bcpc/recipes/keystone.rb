@@ -442,8 +442,8 @@ catalog.each do |svc, svcprops|
   service_ifaces.each do |svc_iface|
     ruby_block "keystone-create-endpoint::#{svc}::#{svc_iface}" do
       block do
-	svc_uri = generate_service_catalog_uri(svcprops, svc_iface)
-	cmd = "openstack endpoint create --region=#{region} '#{svcprops['name']}' #{svc_iface} '#{svc_uri}'"
+        svc_uri = generate_service_catalog_uri(svcprops, svc_iface)
+        cmd = "openstack endpoint create --region=#{region} '#{svcprops['name']}' #{svc_iface} '#{svc_uri}'"
         raise unless execute_in_keystone_admin_context(cmd)
       end
       not_if {
