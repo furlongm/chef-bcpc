@@ -23,6 +23,7 @@ member_role_name=<%= node['bcpc']['keystone']['member_role'] %>
 #secure_proxy_ssl_header = <None>
 #default_publisher_id = <None>
 notification_format = <%= node['bcpc']['keystone']['notification_format'] %>
+notification_opt_out = identity.authenticate.success
 #backdoor_port = <None>
 <% if node['bcpc']['keystone']['debug'] %>
 debug = true
