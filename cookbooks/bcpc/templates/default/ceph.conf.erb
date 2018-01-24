@@ -21,6 +21,7 @@
 [mon]
     keyring = /var/lib/ceph/mon/$cluster-$id/keyring
     debug paxos = 0/5
+    mon compact on start = true
     mon osd allow primary affinity = <%= @node['bcpc']['ceph']['allow_primary_affinity'] %>
 
 # Not using CephFS but mds remains until it's removed at some later point.
@@ -51,7 +52,6 @@
     osd max backfills  = <%= @node['bcpc']['ceph']['osd_max_backfills'] %>
     osd op threads = <%= @node['bcpc']['ceph']['osd_op_threads'] %>
 
-   
 [client.admin]
     # dont want the admin client creating sockets/logs
     admin socket =
