@@ -3,12 +3,12 @@ class BadUserContextDriver < ArgumentError ; end
 # simple mapping of usernames to *local* credential files
 # for overrides ; see adminrc vs admin-openrc files...
 USER_CRED_FILES = {
-  'admin' => '/root/admin-openrc'
+  'admin' => '/root/openrc-admin-domain'
 }
 
 def _get_cred_filename(username)
   basedir = '/root'
-  name = File.join(basedir, username + '-openrc')
+  name = File.join(basedir, 'openrc-' + username)
   USER_CRED_FILES[username] || name
 end
 

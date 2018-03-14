@@ -321,11 +321,11 @@ template "/root/api_versionsrc" do
     mode "0600"
 end
 
-template "/root/keystonerc" do
-    source "keystonerc.erb"
-    owner "root"
-    group "root"
-    mode "0600"
+template '/root/openrc-admin-token' do
+    source 'keystonerc.erb'
+    owner 'root'
+    group 'root'
+    mode '0600'
 end
 
 # configure WSGI
@@ -389,33 +389,40 @@ ruby_block 'update-keystone-db-schema' do
   }
 end
 
-bash "keystone-database-sync" do
-    action :nothing
-    user "root"
-    code "keystone-manage db_sync"
-    notifies :restart, "service[apache2]", :immediately
-end
-
-ruby_block "keystone-region-creation" do
-    block do
-        %x[ export MYSQL_PWD=#{get_config('mysql-root-password')};
-            mysql -uroot -e "INSERT INTO keystone.region (id, extra) VALUES(\'#{node['bcpc']['region_name']}\', '{}');"
-        ]
-    end
-    not_if { system "MYSQL_PWD=#{get_config('mysql-root-password')} mysql -uroot -e 'SELECT id FROM keystone.region WHERE id = \"#{node['bcpc']['region_name']}\"' | grep \"#{node['bcpc']['region_name']}\" >/dev/null" }
+bash 'keystone-database-sync' do
+  action :nothing
+  user 'root'
+  code 'keystone-manage db_sync'
+  notifies :restart, 'service[apache2]', :immediately
 end
 
 # this is a synchronization resource that polls Keystone on the VIP to verify that it's not returning 503s,
 # if something above has restarted Apache and Keystone isn't ready to play yet
-ruby_block "wait-for-keystone-to-become-operational" do
-  delay = 1
-  retries = (node['bcpc']['keystone']['wait_for_keystone_timeout']/delay).ceil
+ruby_block 'wait-for-keystone-to-become-operational' do
+  keystone_timeout = node['bcpc']['keystone']['wait_for_keystone_timeout']
   block do
-    r = execute_in_keystone_admin_context("openstack region list -fvalue")
-    raise Exception.new('Still waiting for keystone') if r.strip.empty? 
+    begin
+      Timeout.timeout(keystone_timeout) do
+        until execute_in_keystone_admin_context('openstack region list')
+          sleep 1
+        end
+      end
+    rescue Timeout::Error
+      raise 'Timeout waiting for keystone to become operational'
+    end
   end
-  retry_delay delay
-  retries retries
+end
+
+region = node['bcpc']['region_name']
+ruby_block "keystone-create-region::#{region}" do
+  block do
+    cmd = "openstack region create #{region}"
+    raise unless execute_in_keystone_admin_context(cmd)
+  end
+  not_if {
+    cmd = "openstack region list -f value -c Region | grep ^#{region}$"
+    execute_in_keystone_admin_context(cmd)
+  }
 end
 
 # TODO(kamidzi): each service should create its *own* catalog entry
@@ -423,96 +430,27 @@ end
 catalog = node['bcpc']['catalog'].dup
 catalog.delete('network') unless node['bcpc']['enabled']['neutron']
 catalog.each do |svc, svcprops|
-  # attempt to delete endpoints that no longer match the environment
-  # (keys off the service type, so it is possible to orphan endpoints if you remove an
-  # entry from the environment service catalog)
-  ruby_block "keystone-delete-outdated-#{svc}-endpoint" do
+  ruby_block "keystone-create-service::#{svc}" do
     block do
-      svc_endpoints_raw = execute_in_keystone_admin_context('openstack endpoint list -f json')
-      begin
-        #puts svc_endpoints_raw
-        svc_endpoints = JSON.parse(svc_endpoints_raw)
-        #puts svc_endpoints
-        svc_ids = svc_endpoints.select { |k| k['Service Type'] == svc }.collect { |v| v['ID'] }
-        #puts svc_ids
-        svc_ids.each do |svc_id|
-          execute_in_keystone_admin_context("openstack endpoint delete #{svc_id} 2>&1")
-        end
-      rescue JSON::ParserError
+      cmd = "openstack service create --name '#{svcprops['name']}' --description '#{svcprops['description']}' #{svc}"
+      raise unless execute_in_keystone_admin_context(cmd)
+    end
+    not_if { execute_in_keystone_admin_context("openstack service show #{svc}") }
+  end
+
+  service_ifaces = ['admin', 'public', 'internal']
+  service_ifaces.each do |svc_iface|
+    ruby_block "keystone-create-endpoint::#{svc}::#{svc_iface}" do
+      block do
+	svc_uri = generate_service_catalog_uri(svcprops, svc_iface)
+	cmd = "openstack endpoint create --region=#{region} '#{svcprops['name']}' #{svc_iface} '#{svc_uri}'"
+        raise unless execute_in_keystone_admin_context(cmd)
       end
+      not_if {
+        cmd = "openstack endpoint list --region=#{region} --service '#{svcprops['name']}' -f value -c Interface | grep ^#{svc_iface}$"
+        execute_in_keystone_admin_context(cmd)
+      }
     end
-    not_if {
-      svc_endpoints_raw = execute_in_keystone_admin_context('openstack endpoint list -f json')
-      begin
-        svc_endpoints = JSON.parse(svc_endpoints_raw)
-        next if svc_endpoints.empty?
-        svcs = svc_endpoints.select { |k| k['Service Type'] == svc }
-        next if svcs.empty?
-
-        adminurl_raw = svcs.select { |v| v['URL'] if v['Interface'] == 'admin' }
-        adminurl = adminurl_raw.empty? ? nil : adminurl_raw[0]['URL']
-        internalurl_raw = svcs.select { |v| v['URL'] if v['Interface'] == 'internal' }
-        internalurl = internalurl_raw.empty? ? nil : internalurl_raw[0]['URL']
-        publicurl_raw = svcs.select { |v| v['URL'] if v['Interface'] == 'public' }
-        publicurl = publicurl_raw.empty? ? nil : publicurl_raw[0]['URL']
-
-        adminurl_match = adminurl.nil? ? true : (adminurl == generate_service_catalog_uri(svcprops, 'admin'))
-        internalurl_match = internalurl.nil? ? true : (internalurl == generate_service_catalog_uri(svcprops, 'internal'))
-        publicurl_match = publicurl.nil? ? true : (publicurl == generate_service_catalog_uri(svcprops, 'public'))
-
-        adminurl_match && internalurl_match && publicurl_match
-      rescue JSON::ParserError
-        false
-      end
-    }
-  end
-
-  # why no corresponding deletion for out of date services?
-  # services don't get outdated in the way endpoints do (since endpoints encode version numbers and ports),
-  # services just say that service X is present in the catalog, not how to access it
-
-  ruby_block "keystone-create-#{svc}-service" do
-    block do
-      execute_in_keystone_admin_context("openstack service create --name '#{svcprops['name']}' --description '#{svcprops['description']}' #{svc}")
-    end
-    only_if {
-      services_raw = execute_in_keystone_admin_context('openstack service list -f json')
-      services = JSON.parse(services_raw)
-      services.select { |s| s['Type'] == svc }.length.zero?
-    }
-  end
-
-  # openstack command syntax changes between identity API v2 and v3, so calculate the endpoint creation command ahead of time
-  identity_api_version = node['bcpc']['catalog']['identity']['uris']['public'].scan(/^[^\d]*(\d+)/)[0][0].to_i
-  if identity_api_version == 3
-    endpoint_create_cmd = <<-EOH
-      openstack endpoint create \
-          --region '#{node['bcpc']['region_name']}' #{svc} public "#{generate_service_catalog_uri(svcprops, 'public')}" ;
-      openstack endpoint create \
-          --region '#{node['bcpc']['region_name']}' #{svc} internal "#{generate_service_catalog_uri(svcprops, 'internal')}" ;
-      openstack endpoint create \
-          --region '#{node['bcpc']['region_name']}' #{svc} admin "#{generate_service_catalog_uri(svcprops, 'admin')}" ;
-    EOH
-  else
-    endpoint_create_cmd = <<-EOH
-      openstack endpoint create \
-          --region '#{node['bcpc']['region_name']}' \
-          --publicurl "#{generate_service_catalog_uri(svcprops, 'public')}" \
-          --adminurl "#{generate_service_catalog_uri(svcprops, 'admin')}" \
-          --internalurl "#{generate_service_catalog_uri(svcprops, 'internal')}" \
-          #{svc}
-    EOH
-  end
-
-  ruby_block "keystone-create-#{svc}-endpoint" do
-    block do
-      execute_in_keystone_admin_context(endpoint_create_cmd)
-    end
-    only_if {
-      endpoints_raw = execute_in_keystone_admin_context('openstack endpoint list -f json')
-      endpoints = JSON.parse(endpoints_raw)
-      endpoints.select { |e| e['Service Type'] == svc }.length.zero?
-    }
   end
 end
 
@@ -538,237 +476,181 @@ admin_config = {
     user_name: admin_username
   },
   ldap: {
-      project_name: get_config('keystone-admin-project-name'),
-      project_domain: get_config('keystone-admin-project-domain'),
-      user_domain: get_config('keystone-admin-user-domain'),
-      user_name: get_config('keystone-admin-user')
+    project_name: get_config('keystone-admin-project-name'),
+    project_domain: get_config('keystone-admin-project-domain'),
+    user_domain: get_config('keystone-admin-user-domain'),
+    user_name: get_config('keystone-admin-user')
   }
 }
+
 # Create the domains
-ruby_block "keystone-create-domains" do
-  block do
-    node['bcpc']['keystone']['domains'].each do |domain, attrs|
-      name = "keystone-create-domain::#{domain}"
+node['bcpc']['keystone']['domains'].each do |domain, attrs|
+  ruby_block "keystone-create-domain::#{domain}" do
+    block do
       desc = attrs['description'] || ''
-      run_context.resource_collection << dom_create = Chef::Resource::RubyBlock.new(name, run_context)
-      dom_create.block  { execute_in_keystone_admin_context("openstack domain create --description '#{desc}' #{domain}") }
-      # TODO(kamidzi): if domain changes, guard will not detect
-      dom_create.not_if {
-        s = execute_in_keystone_admin_context("openstack domain show #{domain}"){|o,e,s| s}
-        s.success?
-      }
-
-      # Configure them
-      name = "keystone-configure-domain::#{domain}"
-      # Use domain_config_upload for now
-      run_context.resource_collection << dom_configure = Chef::Resource::RubyBlock.new(name, run_context)
-      dom_configure.block  { %x{ keystone-manage domain_config_upload --domain "#{domain}"} }
-      # TODO(kamidzi): need a conditional...
+      cmd = "openstack domain create --description '#{desc}' #{domain}"
+      raise unless execute_in_keystone_admin_context(cmd)
     end
+    not_if {
+      cmd = "openstack domain show #{domain}"
+      execute_in_keystone_admin_context(cmd)
+    }
+  end
+  ruby_block "keystone-upload-domain-config::#{domain}" do
+    block do
+      %x{ keystone-manage domain_config_upload --domain "#{domain}"}
+    end
+    only_if {
+      cmd = "openstack domain show #{domain}"
+      execute_in_keystone_admin_context(cmd)
+    }
   end
 end
 
-ruby_block "keystone-create-admin-projects" do
+ruby_block 'keystone-create-admin-user' do
   block do
-    admin_config.each do |backend, config|
-      name = "keystone-create-admin-project::#{config[:project_name]}"
-      run_context.resource_collection << project_create = Chef::Resource::RubyBlock.new(name, run_context)
-      project_create.block {
-        execute_in_keystone_admin_context("openstack project create --domain #{config[:project_domain]} " +
-                                          "--description 'Admin Project' #{config[:project_name]}")
-      }
-      project_create.not_if {
-        cmd = "openstack project show --domain #{config[:project_domain]} " + "#{config[:project_name]}"
-        s = execute_in_keystone_admin_context(cmd){|o,e,s| s}
-        s.success?
-      }
-    end
-  end
-end
-
-ruby_block "keystone-create-admin-user" do
-  block do
-    execute_in_keystone_admin_context("openstack user create --domain #{admin_project_domain} --password " +
-                                      "#{get_config('keystone-local-admin-password')} #{admin_username}")
+    cmd = "openstack user create --domain #{admin_project_domain} --password " +
+          "#{get_config('keystone-local-admin-password')} #{admin_username}"
+    raise unless execute_in_keystone_admin_context(cmd)
   end
   not_if {
     cmd = "openstack user show --domain #{admin_project_domain} #{admin_username}"
-    s = execute_in_keystone_admin_context(cmd){|o,e,s| s}
-    s.success?
+    execute_in_keystone_admin_context(cmd)
   }
 end
 
 # FYI: https://blueprints.launchpad.net/keystone/+spec/domain-specific-roles
-ruby_block "keystone-create-admin-role" do
+ruby_block 'keystone-create-admin-role' do
   block do
-    execute_in_keystone_admin_context("openstack role create #{admin_role_name}")
+    cmd = "openstack role create #{admin_role_name}"
+    raise unless execute_in_keystone_admin_context(cmd)
   end
   not_if {
-    s = execute_in_keystone_admin_context("openstack role show #{admin_role_name}"){|o,e,s| s}
-    s.success?
+    cmd = "openstack role show #{admin_role_name}"
+    execute_in_keystone_admin_context(cmd)
   }
 end
 
-ruby_block "keystone-assign-admin-roles" do
-  block do
-      admin_config.each do |backend, config|
-      name = "keystone-assign-admin-role::#{config[:user_domain]}::#{config[:user_name]}"
-      a_cmd = "openstack role add"
-      a_opts = [
-        "--user-domain #{config[:user_domain]}",
-        "--user #{config[:user_name]}",
-        "--project-domain #{config[:project_domain]}",
-        "--project #{config[:project_name]}"
-      ]
-      a_args = [admin_role_name]
-
-      g_cmd = "openstack role assignment list"
-      g_opts = a_opts + [
-        "-fjson",
-        "--role #{admin_role_name}",
-      ]
-      assign_cmd = ([a_cmd] + a_opts + a_args).join(' ')
-      guard_cmd = ([g_cmd] + g_opts).join(' ')
-      run_context.resource_collection << admin_assign = Chef::Resource::RubyBlock.new(name, run_context)
-      admin_assign.block { execute_in_keystone_admin_context(assign_cmd) }
-      admin_assign.only_if {
-        begin
-          r = JSON.parse execute_in_keystone_admin_context(guard_cmd)
-          r.empty?
-        rescue JSON::ParserError
-          true
-        end
-      }
+admin_config.each do |backend, config|
+  ruby_block "keystone-create-admin-project::#{config[:project_name]}" do
+    block do
+      cmd = "openstack project create --domain #{config[:project_domain]} " +
+            "--description 'Admin Project' #{config[:project_name]}"
+      raise unless execute_in_keystone_admin_context(cmd)
     end
+    not_if {
+      cmd = "openstack project show --domain #{config[:project_domain]} " +
+            "#{config[:project_name]}"
+      execute_in_keystone_admin_context(cmd)
+    }
   end
-end
-
-ruby_block "keystone-assign-admin-role-to-local-domain" do
-  block do
-    name = "keystone-assign-admin-role-to-local-domain::#{admin_config[:sql][:project_domain]}::#{admin_config[:sql][:user_name]}"
-    a_cmd = "openstack role add"
-    a_opts = [
-      "--user #{admin_config[:sql][:user_name]}",
-      "--domain #{admin_config[:sql][:user_domain]}",
-      "--user-domain #{admin_config[:sql][:user_domain]}",
-    ]
-    a_args = [admin_role_name]
-
-    g_cmd = "openstack role assignment list"
-    g_opts = a_opts + [
-      "-fjson",
-      "--role #{admin_role_name}",
-    ]
-    assign_cmd = ([a_cmd] + a_opts + a_args).join(' ')
-    guard_cmd = ([g_cmd] + g_opts).join(' ')
-    run_context.resource_collection << admin_assign = Chef::Resource::RubyBlock.new(name, run_context)
-    admin_assign.block { execute_in_keystone_admin_context(assign_cmd) }
-    admin_assign.only_if {
-      begin
-        r = JSON.parse execute_in_keystone_admin_context(guard_cmd)
-        r.empty?
-      rescue JSON::ParserError
-        true
-      end
+  name = "keystone-assign-admin-role-to-project::#{config[:user_domain]}::#{config[:project_name]}::#{config[:user_name]}"
+  p_opts = [
+    "--user-domain #{config[:user_domain]}",
+    "--project-domain #{config[:project_domain]}",
+    "--project #{config[:project_name]}",
+    "--user #{config[:user_name]}"
+  ]
+  ruby_block name do
+    block do
+      cmd = 'openstack role add ' + p_opts.join(' ')  + '  ' + admin_role_name
+      raise unless execute_in_keystone_admin_context(cmd)
+    end
+    not_if {
+      cmd = 'openstack role assignment list '
+      gp_opts = p_opts + [
+        '-f value -c Role',
+        "--role #{admin_role_name}",
+        "| grep ^#{get_keystone_role_id(admin_role_name)}$"
+      ]
+      cmd += gp_opts.join(' ')
+      execute_in_keystone_admin_context(cmd)
+    }
+  end
+  name = "keystone-assign-admin-role-to-domain::#{config[:user_domain]}::#{config[:user_name]}"
+  d_opts = [
+    "--user-domain #{config[:user_domain]}",
+    "--domain #{config[:user_domain]}",
+    "--user #{config[:user_name]}",
+  ]
+  ruby_block name do
+    block do
+      cmd = 'openstack role add ' + d_opts.join(' ') + ' ' + admin_role_name
+      raise unless execute_in_keystone_admin_context(cmd)
+    end
+    not_if {
+      cmd = 'openstack role assignment list '
+      gd_opts = d_opts + [
+        '-f value -c Role',
+        "--role #{admin_role_name}",
+        "| grep ^#{get_keystone_role_id(admin_role_name)}$"
+      ]
+      cmd += gd_opts.join(' ')
+      execute_in_keystone_admin_context(cmd)
     }
   end
 end
 
-ruby_block "keystone-assign-admin-role-to-default-domain" do
+ruby_block 'keystone-create-service-project' do
   block do
-    name = "keystone-assign-admin-role-to-default-domain::#{admin_config[:ldap][:project_domain]}::#{admin_config[:ldap][:user_name]}"
-    a_cmd = "openstack role add"
-    a_opts = [
-      "--user #{admin_config[:ldap][:user_name]}",
-      "--domain #{admin_config[:ldap][:project_domain]}",
-      "--user-domain #{admin_config[:ldap][:user_domain]}",
-    ]
-    a_args = [admin_role_name]
-
-    g_cmd = "openstack role assignment list"
-    g_opts = a_opts + [
-      "-fjson",
-      "--role #{admin_role_name}",
-    ]
-    assign_cmd = ([a_cmd] + a_opts + a_args).join(' ')
-    guard_cmd = ([g_cmd] + g_opts).join(' ')
-    run_context.resource_collection << admin_assign = Chef::Resource::RubyBlock.new(name, run_context)
-    admin_assign.block { execute_in_keystone_admin_context(assign_cmd) }
-    admin_assign.only_if {
-      begin
-        r = JSON.parse execute_in_keystone_admin_context(guard_cmd)
-        r.empty?
-      rescue JSON::ParserError
-        true
-      end
-    }
-  end
-end
-
-ruby_block "keystone-create-service-project" do
-  block do
-    execute_in_keystone_admin_context("openstack project create --domain #{service_project_domain} --description 'Service Project' #{service_project_name}")
+    cmd = "openstack project create --domain #{service_project_domain} " +
+          "--description 'Service Project' #{service_project_name}"
+    return unless execute_in_keystone_admin_context(cmd)
   end
   not_if {
     cmd = "openstack project show --domain #{service_project_domain} #{service_project_name}"
-    s = execute_in_keystone_admin_context(cmd){|o,e,s| s}
-    s.success?
+    execute_in_keystone_admin_context(cmd)
   }
 end
 
-ruby_block "keystone-create-member-role" do
+ruby_block 'keystone-create-member-role' do
   block do
-    execute_in_keystone_admin_context("openstack role create #{member_role_name}")
+    return unless execute_in_keystone_admin_context("openstack role create #{member_role_name}")
   end
   not_if {
-    s = execute_in_keystone_admin_context("openstack role show #{member_role_name}"){|o,e,s| s}
-    s.success?
+    cmd = "openstack role show #{member_role_name}"
+    execute_in_keystone_admin_context(cmd)
   }
 end
 
 # FIXME(kamidzi): this is another level of indirection because of preference to ldap
-# This is legacy credentials file
-template "/root/adminrc" do
-    source "keystone/openrc.erb"
-    owner "root"
-    group "root"
-    mode "0600"
-    variables(
-      lazy {
-        {
-          username: get_config('keystone-admin-user'),
-          password: get_config('keystone-admin-password'),
-          project_name: get_config('keystone-admin-project-name'),
-          user_domain: get_config('keystone-admin-user-domain'),
-          project_domain: get_config('keystone-admin-project-domain')
-        }
+# This is an ldap project admin credentials file
+adminrc = "/root/openrc-admin-#{get_config('keystone-admin-user')}"
+template adminrc do
+  source 'keystone/openrc.erb'
+  mode '0600'
+  variables(
+    lazy {
+      {
+        username: get_config('keystone-admin-user'),
+        password: get_config('keystone-admin-password'),
+        project_name: get_config('keystone-admin-project-name'),
+        user_domain: get_config('keystone-admin-user-domain'),
+        project_domain: get_config('keystone-admin-project-domain')
       }
-    )
+    }
+  )
 end
 
 # This is a *domain* admin in separate domain along with service accounts
-template "/root/admin-openrc" do
-    source "keystone/openrc.erb"
-    owner "keystone"
-    group "keystone"
-    mode "0600"
-    variables(
-      lazy {
-        {
-          username: admin_username,
-          password: get_config('keystone-local-admin-password'),
-          domain: admin_user_domain,
-          user_domain: admin_user_domain,
-          project_domain: admin_project_domain
-        }
+template '/root/openrc-admin-domain' do
+  source 'keystone/openrc.erb'
+  mode '0600'
+  variables(
+    lazy {
+      {
+        username: admin_username,
+        password: get_config('keystone-local-admin-password'),
+        domain: admin_user_domain,
+        user_domain: admin_user_domain,
+        project_domain: admin_project_domain
       }
-    )
+    }
+  )
 end
 
-#
 # Cleanup actions
-#
-file "/var/lib/keystone/keystone.db" do
+file '/var/lib/keystone/keystone.db' do
   action :delete
 end
 
@@ -777,6 +659,14 @@ template "/etc/logrotate.d/keystone" do
     owner "root"
     group "root"
     mode 00644
+end
+
+link '/root/keystonerc' do
+  to '/root/openrc-admin-token'
+end
+
+link '/root/adminrc' do
+  to adminrc
 end
 
 # Migration for user ids
@@ -797,5 +687,5 @@ ruby_block "keystone-list-admin-domain-users" do
     execute_in_keystone_admin_context("openstack user list --domain #{get_config('keystone-admin-user-domain')}")
   end
   notifies :run, "bash[keystone-database-sync]", :immediately
-  not_if { %x[bash -c '. /root/adminrc && openstack token issue'] ; $?.success? and keystone_db_version == '98' }
+  not_if { %x[bash -c ". #{adminrc} && openstack token issue"] ; $?.success? and keystone_db_version == '98' }
 end
