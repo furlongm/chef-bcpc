@@ -1,4 +1,4 @@
-- name: reload haproxy
+- name: reload haproxy service
   service:
     name: haproxy
     state: reloaded
