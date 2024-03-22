@@ -1,7 +1,7 @@
 # Cookbook:: bcpc
 # Library:: utils
 #
-# Copyright:: 2021 Bloomberg Finance L.P.
+# Copyright:: 2024 Bloomberg Finance L.P.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -269,7 +269,16 @@ end
 def node_network_map
   # try to get node information via the node hostname
   match = node['hostname'].match(/^.*r(\d+)n(\d+).*$/i)
-  raise 'could not determine node information from hostname' if match.nil?
+  # before failing, try matching on the hostname from the metadata API
+  if match.nil?
+    begin
+      client = Net::HTTP.new('169.254.169.254', nil, nil)
+      hostname = client.get('/latest/meta-data/hostname').body.split('.')[0]
+      match = hostname.match(/^.*r(\d+)n(\d+).*$/i)
+    rescue Net::OpenTimeout
+    end
+    raise 'could not determine node information from hostname' if match.nil?
+  end
 
   {
     'rack_id' => match.captures[0].to_i,
@@ -429,4 +438,42 @@ end
 def etcd_advertised_name(member = node)
   hosts_to_cnames = node['bcpc']['etcd']['host_to_cnames']
   hosts_to_cnames.fetch(member['hostname'], member['service_ip'])
+end
+
+def add_qos_to_volume_type(backend)
+  Chef::Resource::RubyBlock.send(:include, Chef::Mixin::ShellOut)
+
+  # create a qos policy
+  qos_name = "#{backend['name']}-qos"
+  qos_create_opts = []
+  backend['qos'].each do |k, v|
+    qos_create_opts.push("--property #{k}=#{v}")
+  end
+
+  cmd = 'openstack volume qos create ' \
+    "#{qos_create_opts.join(' ')} #{qos_name}"
+  cmd_out = shell_out(cmd, env: os_adminrc)
+  raise 'unable to create a qos policy' if cmd_out.error?
+
+  # associate the qos policy to the volume type
+  cmd = 'openstack volume qos associate ' \
+    "#{qos_name} #{backend['name']}"
+  cmd_out = shell_out(cmd, env: os_adminrc)
+  raise 'unable to associate the qos policy' if cmd_out.error?
+end
+
+def remove_qos_from_volume_type(backend)
+  Chef::Resource::RubyBlock.send(:include, Chef::Mixin::ShellOut)
+
+  # disassociate the qos policy from the volume type
+  qos_name = "#{backend['name']}-qos"
+  cmd = 'openstack volume qos disassociate ' \
+    "--volume-type #{backend['name']} #{qos_name}"
+  cmd_out = shell_out(cmd, env: os_adminrc)
+  raise 'unable to disassociate the qos policy' if cmd_out.error?
+
+  # delete the qos policy
+  cmd = "openstack volume qos delete #{qos_name}"
+  cmd_out = shell_out(cmd, env: os_adminrc)
+  raise 'unable to delete the qos policy' if cmd_out.error?
 end
