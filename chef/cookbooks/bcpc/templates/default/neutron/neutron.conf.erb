@@ -70,6 +70,9 @@ password = <%= @config['nova']['creds']['os']['password'] %>
 [oslo_concurrency]
 lock_path = $state_path/lock
 
+[oslo_messaging_rabbit]
+heartbeat_in_pthread = <%= node['bcpc']['openstack']['oslo_messaging_rabbit']['heartbeat_in_pthread'] %>
+
 <% if node['bcpc']['neutron']['notifications']['enabled'] %>
 [oslo_messaging_notifications]
 driver = messagingv2

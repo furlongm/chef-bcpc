@@ -49,6 +49,9 @@ cache_time = 600
 
 [oauth1]
 
+[oslo_messaging_rabbit]
+heartbeat_in_pthread = <%= node['bcpc']['openstack']['oslo_messaging_rabbit']['heartbeat_in_pthread'] %>
+
 [oslo_messaging_notifications]
 <% if node['bcpc']['keystone']['drivers']['notification'] %>
 driver = <%= node['bcpc']['keystone']['drivers']['notification'] %>

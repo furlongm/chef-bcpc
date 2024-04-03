@@ -113,6 +113,8 @@ auth_type = password
 # middleware should parse the headers or not. (boolean value)
 enable_proxy_headers_parsing = true
 
+[oslo_messaging_rabbit]
+heartbeat_in_pthread = <%= node['bcpc']['openstack']['oslo_messaging_rabbit']['heartbeat_in_pthread'] %>
 
 [trustee]
 

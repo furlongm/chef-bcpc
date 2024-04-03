@@ -48,6 +48,9 @@ lock_path = /var/lock/cinder
 [oslo_policy]
 policy_dirs = policy.d
 
+[oslo_messaging_rabbit]
+heartbeat_in_pthread = <%= node['bcpc']['openstack']['oslo_messaging_rabbit']['heartbeat_in_pthread'] %>
+
 [service_user]
 send_service_user_token = true
 auth_type = password

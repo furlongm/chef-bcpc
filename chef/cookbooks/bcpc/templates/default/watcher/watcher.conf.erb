@@ -26,6 +26,9 @@ lock_path = /var/lock/watcher
 [oslo_messaging_notifications]
 driver = messagingv2
 
+[oslo_messaging_rabbit]
+heartbeat_in_pthread = <%= node['bcpc']['openstack']['oslo_messaging_rabbit']['heartbeat_in_pthread'] %>
+
 [watcher_clients_auth]
 auth_url = <%= "https://#{@node['bcpc']['cloud']['fqdn']}:35357/" %>
 project_name = service
