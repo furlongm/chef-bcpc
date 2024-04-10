@@ -1,7 +1,7 @@
 # Define Ansible virtualization facts
 - name: Define Ansible virtualization facts
   setup:
-    gather_subset: "!all,!min,virtual"
+    gather_subset: "!all,!min,processor,virtual"
 
 # ip_conntrack module configuration and loading
 - name: Configure ip_conntrack kernel module when loaded
