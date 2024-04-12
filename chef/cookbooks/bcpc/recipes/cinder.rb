@@ -161,6 +161,30 @@ cinder_config.ceph_clients.each do |client|
   end
 end
 
+# Raise the file descriptor limit for cinder-volume
+directory '/etc/systemd/system/cinder-volume.service.d' do
+  action :create
+end
+
+template '/etc/systemd/system/cinder-volume.service.d/override.conf' do
+  source 'cinder/override.conf.erb'
+  mode '0644'
+  owner 'root'
+  group 'cinder'
+
+  variables(
+    cinder_volume_fd_limit: node['bcpc']['cinder']['cinder-volume']['fd_limit']
+  )
+
+  notifies :run, 'execute[reload systemd]', :immediately
+  notifies :restart, 'service[cinder-volume]', :delayed
+end
+
+execute 'reload systemd' do
+  action :nothing
+  command 'systemctl daemon-reload'
+end
+
 # create policy.d dir for policy overrides
 directory '/etc/cinder/policy.d' do
   action :create
