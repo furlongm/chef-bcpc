@@ -269,6 +269,63 @@
     - "vim"
     - "xinetd"
 
+# Configure iptables and disable nftables service
+- name: Determine whether the host is in scope or not
+  set_fact:
+    is_modifiable: >
+      {{
+        inventory_hostname not in groups.get('storagenodes', []) + groups.get('storageheadnodes', []) and
+        ansible_facts['distribution_version'] == '20.04'
+      }}
+  tags: always
+
+- name: Configure system based on in-scope determination
+  when: is_modifiable
+  block:
+    - name: Check if the nftables service is installed and active
+      ansible.builtin.systemd:
+        name: nftables.service
+      register: nftables_status
+      check_mode: false
+
+    - name: Disable nftables service and remove the package if active
+      when: nftables_status.status.ActiveState == 'active'
+      block:
+        - name: Disable nftables service
+          ansible.builtin.systemd:
+            name: nftables.service
+            enabled: false
+            state: stopped
+
+        - name: Uninstall nftables package
+          ansible.builtin.apt:
+            name: nftables
+            state: absent
+
+    - name: Ensure the iptables package is installed
+      ansible.builtin.apt:
+        name:
+          - iptables
+          - ebtables
+        state: present
+
+    - name: Check if iptables is set to use the legacy alternatives
+      ansible.builtin.shell:
+        cmd: "update-alternatives --query {{ item }} | grep -q 'Value: /usr/sbin/{{ item }}-legacy'"
+      loop:
+        - iptables
+        - ebtables
+      register: legacy_check
+      ignore_errors: true
+      changed_when: false
+      failed_when: legacy_check.rc > 1
+
+    - name: Set iptables legacy alternative if not already set
+      ansible.builtin.command:
+        cmd: "update-alternatives --set {{ item.item }} /usr/sbin/{{ item.item }}-legacy"
+      loop: "{{ legacy_check.results }}"
+      changed_when: item.rc != 0
+
 # Configure /etc/screenrc
 - name: Configure /etc/screenrc
   copy:
