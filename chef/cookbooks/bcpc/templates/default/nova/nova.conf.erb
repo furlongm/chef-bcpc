@@ -134,6 +134,9 @@ policy_dirs = policy.d
 [oslo_concurrency]
 lock_path = /var/lib/nova/tmp
 
+[oslo_messaging_rabbit]
+heartbeat_in_pthread = <%= node['bcpc']['openstack']['oslo_messaging_rabbit']['heartbeat_in_pthread'] %>
+
 [oslo_messaging_notifications]
 driver = <%= node['bcpc']['nova']['notifications']['driver'] %>
 topics = <%= node['bcpc']['nova']['notifications']['topics'] %>

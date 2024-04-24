@@ -69,3 +69,10 @@ default['bcpc']['openstack']['flavors']['generic2.xlarge']['disk'] = 100
 default['bcpc']['openstack']['flavors']['generic2.2xlarge']['vcpus'] = 16
 default['bcpc']['openstack']['flavors']['generic2.2xlarge']['ram'] = 98304
 default['bcpc']['openstack']['flavors']['generic2.2xlarge']['disk'] = 100
+
+# oslo.messaging
+# A workaround for bug reported:
+# https://bugs.launchpad.net/neutron/+bug/1965140/
+# Disabling this config for all services as the default
+# is changed to false in the upstream fix.
+default['bcpc']['openstack']['oslo_messaging_rabbit']['heartbeat_in_pthread'] = false

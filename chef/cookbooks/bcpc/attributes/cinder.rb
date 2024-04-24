@@ -2,6 +2,9 @@
 # cinder
 ###############################################################################
 
+# cinder-volume tuning
+default['bcpc']['cinder']['cinder-volume']['fd_limit'] = 524288
+
 # specify database and configure SQLAlchemy overflow/QueuePool sizes
 default['bcpc']['cinder']['db']['dbname'] = 'cinder'
 default['bcpc']['cinder']['db']['max_overflow'] = 128

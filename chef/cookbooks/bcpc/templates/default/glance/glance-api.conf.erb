@@ -61,6 +61,7 @@ lock_path = /var/lock/glance
 
 [oslo_messaging_rabbit]
 amqp_durable_queues = <%= node['bcpc']['rabbitmq']['durable_queues'] %>
+heartbeat_in_pthread = <%= node['bcpc']['openstack']['oslo_messaging_rabbit']['heartbeat_in_pthread'] %>
 
 
 [paste_deploy]
